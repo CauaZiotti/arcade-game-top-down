@@ -1,4 +1,24 @@
 import arcade
+import math
+from ia import ia_system  as ia
+
+TAMANHO_TILE = 40
+ALTURA_TELA = 600
+
+# ==========================================
+# Funções de Tradução (Pixels <-> Matriz)
+# ==========================================
+def pixel_para_grid(x, y):
+    #Converte coordenada da tela para linha e coluna da matriz 
+    coluna = int(x // TAMANHO_TILE)
+    linha = int((ALTURA_TELA - y) // TAMANHO_TILE)
+    return linha, coluna
+
+def grid_para_pixel(linha, coluna):
+    #Converte linha e coluna da matriz para o centro do Tile na tela 
+    x = (coluna * TAMANHO_TILE) + (TAMANHO_TILE / 2)
+    y = ALTURA_TELA - (linha * TAMANHO_TILE) - (TAMANHO_TILE / 2)
+    return x, y
 
 class Jogador(arcade.SpriteSolidColor):
     def __init__(self, largura, altura, cor):
@@ -11,15 +31,82 @@ class Jogador(arcade.SpriteSolidColor):
         self.center_y += self.change_y
 
 class InimigoBase(arcade.SpriteCircle):
-    def __init__(self, raio, cor, velocidade):
+    def __init__(self, raio, cor, velocidade, raio_visao, angulo_visao):
         super().__init__(raio, cor)
         self.velocidade = velocidade
-        self.estado = "patrulha" # Pode ser "patrulha" ou "perseguicao"
+        self.estado = "patrulha" 
 
-    def update_ia(self, mapa, jogador_pos):
-        # Aqui é onde você vai integrar o seu arquivo ia_sistemas.py depois!
-        # Exemplo: chamar o A* e alterar self.change_x e self.change_y para seguir o caminho
-        pass
+        #parametros de IA
+        self.raio_visao = raio_visao #dist máx em blocos 
+        self.angulo_visao = angulo_visao #ângulo de cone de visão em graus
+        self.angulo_olhar = 0 #ondeo inimigo está olhando no momento
+
+        self.caminho_atual = []
+
+    def update_ia(self, mapa, jogador_x, jogador_y):
+        # Descobre onde está o player e o inimigo
+        minha_pos_grid = pixel_para_grid(self.center_x, self.center_y)
+        jogador_pos_grid = pixel_para_grid(jogador_x, jogador_y)
+
+        # 1. CORREÇÃO: O sinal de menos (-) voltou para o change_y para alinhar Pixels e Matriz
+        if self.change_x != 0 or self.change_y != 0:
+            self.angulo_olhar = math.degrees(math.atan2(-self.change_y, self.change_x)) 
+
+        # Junta fov e raycasting pra ver se o player está visível
+        jogador_visivel = ia.is_player_in_fov(
+            minha_pos_grid, 
+            jogador_pos_grid, 
+            self.angulo_olhar, 
+            self.angulo_visao, 
+            self.raio_visao, 
+            mapa
+        )
+
+        # Máquina de estados para controle 
+        if jogador_visivel:
+            self.estado = "perseguicao"
+        else:
+            self.estado = "patrulha"
+            self.change_x = 0
+            self.change_y = 0
+        
+        # Integra A*, só persegue se o estado permitir
+        if self.estado == "perseguicao":
+            caminho = ia.a_star(mapa, minha_pos_grid, jogador_pos_grid)
+
+            self.caminho_atual = caminho # Guarda o caminho atual para debug ou uso futuro
+
+            # 2. CORREÇÃO: Leitura à prova de falhas do caminho do A*
+            if caminho and len(caminho) > 0:
+                
+                # Se o índice 0 for onde o inimigo já está, o próximo passo é o índice 1
+                if caminho[0] == minha_pos_grid and len(caminho) > 1:
+                    proximo_passo = caminho[1]
+                else:
+                    # Se o A* já filtrou o início, o próximo passo é direto o índice 0
+                    proximo_passo = caminho[0]
+
+                # Converte o próximo passo de volta para pixels
+                alvo_x, alvo_y = grid_para_pixel(proximo_passo[0], proximo_passo[1])
+
+                if len(caminho) == 1 or proximo_passo == jogador_pos_grid: #deixa a perseguição mais legal e real
+                    alvo_x, alvo_y = jogador_x, jogador_y
+
+                # Calcula a direção para o centro do próximo quadrado
+                dist_x = alvo_x - self.center_x
+                dist_y = alvo_y - self.center_y
+                distancia_total = math.hypot(dist_x, dist_y)
+
+                if distancia_total > 2: # Margem de erro pra evitar tremer
+                    self.change_x = (dist_x / distancia_total) * self.velocidade
+                    self.change_y = (dist_y / distancia_total) * self.velocidade
+                else:
+                    self.change_x = 0
+                    self.change_y = 0
+            else:
+                self.caminho_atual = []
+                self.change_x = 0
+                self.change_y = 0
 
     def update(self, *args, **kwargs):
         self.center_x += self.change_x
@@ -29,12 +116,56 @@ class InimigoBase(arcade.SpriteCircle):
 class Slime(InimigoBase):
     def __init__(self, raio, cor):
         # Slimes são mais lentos
-        super().__init__(raio, cor, velocidade=2)
-        self.raio_visao = 4 
+        super().__init__(raio, cor, velocidade=2, raio_visao=5, angulo_visao=360)
+        self.angulo_olhar = 0 #começa olhando pra esquerda
 
 class Morcego(InimigoBase):
     def __init__(self, raio, cor):
-        # Morcegos são mais rápidos e enxergam mais longe
-        super().__init__(raio, cor, velocidade=4)
-        self.raio_visao = 8
-        self.angulo_visao = 120
+        # Morcegos são mais rápidos e enxergam longe (8 blocos), cone de 120 graus
+        super().__init__(raio, cor, velocidade=4, raio_visao=8, angulo_visao=120)
+        self.angulo_olhar = 180
+
+    def update_ia(self, mapa, jogador_x, jogador_y):
+        minha_pos_grid = pixel_para_grid(self.center_x, self.center_y)
+        jogador_pos_grid = pixel_para_grid(jogador_x, jogador_y)
+
+        # 1. Atualiza a direção do olhar
+        if self.change_x != 0 or self.change_y != 0:
+            self.angulo_olhar = math.degrees(math.atan2(-self.change_y, self.change_x))
+
+        # 2. Usa Raycasting e FOV (não enxerga através de paredes)
+        jogador_visivel = ia.is_player_in_fov(
+            minha_pos_grid, 
+            jogador_pos_grid, 
+            self.angulo_olhar, 
+            self.angulo_visao, 
+            self.raio_visao, 
+            mapa
+        )
+
+        # 3. Máquina de Estados
+        if jogador_visivel:
+            self.estado = "perseguicao"
+        else:
+            self.estado = "patrulha"
+            self.change_x = 0
+            self.change_y = 0
+            self.caminho_atual = [] # Limpa a linha de debug
+
+        # 4. Perseguição (IGNORA PAREDES E O A*)
+        if self.estado == "perseguicao":
+            # Calcula a distância direta (linha reta em pixels) para o jogador
+            dist_x = jogador_x - self.center_x
+            dist_y = jogador_y - self.center_y
+            distancia_total = math.hypot(dist_x, dist_y)
+
+            if distancia_total > 2:
+                # Voa direto para o jogador passando por cima de tudo
+                self.change_x = (dist_x / distancia_total) * self.velocidade
+                self.change_y = (dist_y / distancia_total) * self.velocidade
+            else:
+                self.change_x = 0
+                self.change_y = 0
+            
+            # Para o Debug Visual funcionar, fingimos que o "caminho" é uma reta
+            self.caminho_atual = [minha_pos_grid, jogador_pos_grid]
