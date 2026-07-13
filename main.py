@@ -53,17 +53,17 @@ class FasePrincipal(arcade.View):
                     parede.center_y = y
                     self.lista_paredes.append(parede)
 
-        # Jogador
+        #Jogador
         self.jogador = Jogador(20, 20, arcade.color.BLUE)
         self.jogador.center_x, self.jogador.center_y = grid_para_pixel(1, 1) # Nasce no canto superior esquerdo
         self.lista_jogadores.append(self.jogador)
 
-        # Slime
+        #Slime
         self.slime = Slime(15, arcade.color.APPLE_GREEN)
         self.slime.center_x, self.slime.center_y = grid_para_pixel(13, 18) # Nasce no canto inferior direito
         self.lista_inimigos.append(self.slime)
 
-        #morcego
+        #Morcego
         self.morcego = Morcego(15, arcade.color.PURPLE)
         self.morcego.center_x, self.morcego.center_y = grid_para_pixel(1, 18) # Nasce no canto superior direito
         self.lista_inimigos.append(self.morcego)

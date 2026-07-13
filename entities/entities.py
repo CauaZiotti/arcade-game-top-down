@@ -1,5 +1,6 @@
 import arcade
 import math
+import random
 from ia import ia_system  as ia
 
 TAMANHO_TILE = 40
@@ -23,12 +24,12 @@ def grid_para_pixel(linha, coluna):
 class Jogador(arcade.SpriteSolidColor):
     def __init__(self, largura, altura, cor):
         super().__init__(largura, altura, cor)
-        self.velocidade = 5
+        self.velocidade = 300
 
-    def update(self, *args, **kwargs):
+    def update(self, delta_time: float = 1/60, *args, **kwargs):
         # A movimentação baseada em change_x e change_y é processada aqui
-        self.center_x += self.change_x
-        self.center_y += self.change_y
+        self.center_x += self.change_x * delta_time
+        self.center_y += self.change_y * delta_time
 
 class InimigoBase(arcade.SpriteCircle):
     def __init__(self, raio, cor, velocidade, raio_visao, angulo_visao):
@@ -42,6 +43,7 @@ class InimigoBase(arcade.SpriteCircle):
         self.angulo_olhar = 0 #ondeo inimigo está olhando no momento
 
         self.caminho_atual = []
+        self.tempo_espera_patrulha = 0
 
     def update_ia(self, mapa, jogador_x, jogador_y):
         # Descobre onde está o player e o inimigo
@@ -65,10 +67,9 @@ class InimigoBase(arcade.SpriteCircle):
         # Máquina de estados para controle 
         if jogador_visivel:
             self.estado = "perseguicao"
+            self.tempo_espera_patrulha = 0
         else:
             self.estado = "patrulha"
-            self.change_x = 0
-            self.change_y = 0
         
         # Integra A*, só persegue se o estado permitir
         if self.estado == "perseguicao":
@@ -104,25 +105,69 @@ class InimigoBase(arcade.SpriteCircle):
                     self.change_x = 0
                     self.change_y = 0
             else:
-                self.caminho_atual = []
                 self.change_x = 0
                 self.change_y = 0
 
-    def update(self, *args, **kwargs):
-        self.center_x += self.change_x
-        self.center_y += self.change_y
+        elif self.estado == "patrulha":
+            if self.tempo_espera_patrulha > 0:
+                #para para 'descansar'
+                self.tempo_espera_patrulha -= 1
+                self.change_x = 0
+                self.change_y = 0
+            else:
+                if not self.caminho_atual:
+                    linha_aleatoria = minha_pos_grid[0] + random.randint(-4, 4)
+                    coluna_aleatoria = minha_pos_grid[1] + random.randint(-4, 4)
+
+                    if (0 <= linha_aleatoria < len(mapa)) and (0 <= coluna_aleatoria < len(mapa[0])):
+                        if mapa[linha_aleatoria][coluna_aleatoria] == 0:
+                            self.caminho_atual = ia.a_star(mapa, minha_pos_grid, (linha_aleatoria, coluna_aleatoria))
+                    if not self.caminho_atual:
+                        # Se não encontrou caminho, espera um pouco antes de tentar novamente
+                        self.tempo_espera_patrulha = 30
+
+                # Se já tem o caminho da patrulha, vai andando
+                if self.caminho_atual and len(self.caminho_atual) > 0:
+                    if self.caminho_atual[0] == minha_pos_grid and len(self.caminho_atual) > 1:
+                        proximo_passo = self.caminho_atual[1]
+                    else:
+                        proximo_passo = self.caminho_atual[0]
+
+                    alvo_x, alvo_y = grid_para_pixel(proximo_passo[0], proximo_passo[1])
+                    dist_x = alvo_x - self.center_x
+                    dist_y = alvo_y - self.center_y
+                    distancia_total = math.hypot(dist_x, dist_y)
+
+                    if distancia_total > 2:
+                        # Anda devagar na patrulha (metade da velocidade)
+                        self.change_x = (dist_x / distancia_total) * (self.velocidade / 2)
+                        self.change_y = (dist_y / distancia_total) * (self.velocidade / 2)
+                    else:
+                        # Chegou no bloco! Tira ele da lista
+                        if len(self.caminho_atual) > 1:
+                            self.caminho_atual.pop(0)
+                        else:
+                            # Fim da patrulha. Zera a lista e descansa um pouco
+                            self.caminho_atual = []
+                            self.change_x = 0
+                            self.change_y = 0
+                            self.tempo_espera_patrulha = 60 # Espera 1 segundo
+
+    def update(self, delta_time: float = 1/60, *args, **kwargs):
+        self.center_x += self.change_x * delta_time
+        self.center_y += self.change_y * delta_time
 
 # Inimigos Específicos herdando da base
 class Slime(InimigoBase):
     def __init__(self, raio, cor):
         # Slimes são mais lentos
-        super().__init__(raio, cor, velocidade=2, raio_visao=5, angulo_visao=360)
+        super().__init__(raio, cor, velocidade=120, raio_visao=5, angulo_visao=360)
         self.angulo_olhar = 0 #começa olhando pra esquerda
 
 class Morcego(InimigoBase):
     def __init__(self, raio, cor):
         # Morcegos são mais rápidos e enxergam longe (8 blocos), cone de 120 graus
-        super().__init__(raio, cor, velocidade=4, raio_visao=8, angulo_visao=120)
+        super().__init__(raio, cor, velocidade=240, raio_visao=8, angulo_visao=120)
         self.angulo_olhar = 180
 
     def update_ia(self, mapa, jogador_x, jogador_y):
@@ -140,7 +185,8 @@ class Morcego(InimigoBase):
             self.angulo_olhar, 
             self.angulo_visao, 
             self.raio_visao, 
-            mapa
+            mapa,
+            True  # Morcegos ignoram paredes para perseguir o jogador
         )
 
         # 3. Máquina de Estados

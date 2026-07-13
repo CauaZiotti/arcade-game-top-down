@@ -33,7 +33,7 @@ def raycast_clear_line(grid, start, end):
 # ==========================================
 # 2. FOV (Campo de Visão)
 # ==========================================
-def is_player_in_fov(enemy_pos, player_pos, enemy_facing_angle, fov_angle, max_dist, grid):
+def is_player_in_fov(enemy_pos, player_pos, enemy_facing_angle, fov_angle, max_dist, grid, ignora_paredes = False):
     """
     Verifica se o jogador está visível integrando Distância + Ângulo + Raycasting.
     """
@@ -54,7 +54,9 @@ def is_player_in_fov(enemy_pos, player_pos, enemy_facing_angle, fov_angle, max_d
         
     if abs(angle_diff) > (fov_angle / 2):
         return False
-        
+    
+    if ignora_paredes:
+        return True
     # 3. Se passou pela distância e pelo ângulo, faz o Raycasting
     return raycast_clear_line(grid, enemy_pos, player_pos)
 
