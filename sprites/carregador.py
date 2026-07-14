@@ -3,16 +3,37 @@
 # Direções: front, back, side (olhando p/ direita) e side_flip (espelhado p/ esquerda).
 
 import arcade
+from PIL import Image
 
 ACOES = ["idle", "run", "atack", "dead"]
 DIRECOES = ["front", "back", "side", "side_flip"]
 
 
-def fatiar(caminho, frame_larg, frame_alt):
-    """Fatia um spritesheet horizontal em N frames (N = largura da imagem / largura do frame)."""
-    sheet = arcade.load_spritesheet(caminho)
-    n = sheet.image.width // frame_larg
-    return sheet.get_texture_grid(size=(frame_larg, frame_alt), columns=n, count=n)
+def fatiar(caminho, frame_larg, frame_alt, deslocamento=(0, 0)):
+    """Fatia um spritesheet horizontal em N frames (N = largura da imagem / largura do frame).
+    `deslocamento` (dx, dy) empurra o desenho dentro do frame — usado pra centralizar
+    o corpo do personagem, que vem pintado em posições diferentes em cada vista."""
+    if deslocamento == (0, 0):
+        sheet = arcade.load_spritesheet(caminho)
+        n = sheet.image.width // frame_larg
+        return sheet.get_texture_grid(size=(frame_larg, frame_alt), columns=n, count=n)
+
+    img = Image.open(caminho).convert("RGBA")
+    n = img.width // frame_larg
+    texturas = []
+    for i in range(n):
+        frame = img.crop((i * frame_larg, 0, (i + 1) * frame_larg, frame_alt))
+        base = Image.new("RGBA", (frame_larg, frame_alt), (0, 0, 0, 0))
+        base.paste(frame, deslocamento)
+        texturas.append(arcade.Texture(base))
+    return texturas
+
+
+def _centro_do_desenho(caminho, frame_larg, frame_alt):
+    """Centro (x, y) dos pixels visíveis do 1º frame de um spritesheet."""
+    img = Image.open(caminho).convert("RGBA")
+    bb = img.crop((0, 0, frame_larg, frame_alt)).getchannel("A").getbbox()
+    return (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2
 
 
 def espelhar(texturas):
@@ -41,13 +62,23 @@ def completar(anims):
 
 def anims_personagem():
     """Personagem: frames de 32x32 (2x2 unidades de 16px).
-    Atack 4f | Dead 6f | Idle 4-5f | Run 6f (a contagem sai da largura do arquivo)."""
+    Atack 4f | Dead 6f | Idle 4-5f | Run 6f (a contagem sai da largura do arquivo).
+
+    As vistas vêm pintadas em alturas diferentes do canvas (a lateral fica ~4px
+    mais baixa que a frontal), o que fazia o corpo 'pular' ao virar. Medimos o
+    centro do corpo no Idle de cada vista e deslocamos TODOS os sheets daquela
+    vista pro corpo cair exatamente no meio do frame."""
     A = "Assets/Character"
+    deslocamentos = {}
+    for direcao, vista in [("front", "front"), ("back", "back"), ("side", "side")]:
+        cx, cy = _centro_do_desenho(f"{A}/Idle/Idle_{vista}_view.png", 32, 32)
+        deslocamentos[direcao] = (round(16 - cx), round(16 - cy))
+
     anims = {}
     for acao, pasta in [("idle", "Idle"), ("run", "Run"), ("atack", "Atack"), ("dead", "Dead")]:
         for direcao, vista in [("front", "front"), ("back", "back"), ("side", "side")]:
             caminho = f"{A}/{pasta}/{pasta}_{vista}_view.png"
-            anims[(acao, direcao)] = fatiar(caminho, 32, 32)
+            anims[(acao, direcao)] = fatiar(caminho, 32, 32, deslocamentos[direcao])
     return completar(anims)
 
 

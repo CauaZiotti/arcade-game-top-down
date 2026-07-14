@@ -17,6 +17,10 @@ ALTURA_MUNDO = ALTURA_TELA
 LARGURA_MUNDO = LARGURA_TELA
 
 DURACAO_FRAME = 0.12  # segundos por keyframe de animação
+TEMPO_COOLDOWN_ATAQUE = 0.5  # segundos em idle após o ataque antes de poder atacar de novo
+INTERVALO_RECALCULO_CAMINHO = 10  # frames entre buscas completas de A* durante a perseguição
+TEMPO_MEMORIA_MORCEGO = 2.0  # segundos que o morcego continua buscando após perder o jogador de vista
+TEMPO_INVULNERAVEL = 1.0  # segundos de invulnerabilidade do jogador após levar um golpe
 
 def definir_mundo(linhas, colunas):
     """Registra o tamanho do mapa (em tiles) pras conversões pixel<->grid."""
@@ -66,18 +70,39 @@ class EntidadeAnimada(arcade.Sprite):
         self.tempo_frame = 0.0
         self.morto = False
         self.atacando = False
+        self.cooldown_ataque = 0.0
+        self.vida_maxima = 1
+        self.vida = 1
+        self.tempo_flash_dano = 0.0
+        self._anim_anterior = ("idle", "front")
         self.texture = anims[("idle", "front")][0]
 
     def _frames(self):
         return self.anims[(self.acao, self.direcao)]
 
     def atacar(self):
-        if self.morto or self.atacando:
+        # cooldown_ataque garante um tempo visível em idle entre um ataque e o
+        # próximo — sem isso, um inimigo que fica parado dentro do alcance de
+        # ataque reinicia a animação de ataque no frame seguinte ao fim da
+        # anterior e nunca parece voltar pro idle.
+        if self.morto or self.atacando or self.cooldown_ataque > 0:
             return
         self.atacando = True
         self.acao = "atack"
         self.frame = 0
         self.tempo_frame = 0.0
+
+    def receber_dano(self, quantidade=1):
+        """Reduz a vida da entidade; ao zerar, morre. Inimigos com mais de 1
+        vida (morcego, slime) sobrevivem a um golpe e piscam brevemente pra
+        avisar que foram atingidos mas ainda estão de pé."""
+        if self.morto:
+            return
+        self.vida -= quantidade
+        if self.vida <= 0:
+            self.morrer()
+        else:
+            self.tempo_flash_dano = 0.15
 
     def morrer(self):
         if self.morto:
@@ -89,6 +114,8 @@ class EntidadeAnimada(arcade.Sprite):
         self.tempo_frame = 0.0
         self.change_x = 0
         self.change_y = 0
+        self.tempo_flash_dano = 0.0
+        self.alpha = 255
 
     def atualizar_direcao(self):
         """Escolhe ação (idle/run) e direção do sprite a partir do movimento atual."""
@@ -107,6 +134,26 @@ class EntidadeAnimada(arcade.Sprite):
             self.direcao = "front"  # descendo = de frente
 
     def update_animation(self, delta_time: float = 1/60, *args, **kwargs):
+        # trocou de ação/direção? recomeça a animação do frame 0 (senão o índice
+        # 'vaza' de uma animação pra outra e a troca fica truncada/pulada)
+        chave = (self.acao, self.direcao)
+        if chave != self._anim_anterior:
+            self._anim_anterior = chave
+            self.frame = 0
+            self.tempo_frame = 0.0
+
+        if self.cooldown_ataque > 0:
+            self.cooldown_ataque -= delta_time
+
+        if self.tempo_flash_dano > 0:
+            # só mexe no alpha enquanto o flash está ativo (e no frame em que
+            # ele expira) — assim não conflita com o próprio piscar de
+            # invulnerabilidade que o Jogador controla em seu update()
+            self.tempo_flash_dano -= delta_time
+            self.alpha = 130
+            if self.tempo_flash_dano <= 0:
+                self.alpha = 255
+
         frames = self._frames()
         self.tempo_frame += delta_time
         if self.tempo_frame >= DURACAO_FRAME:
@@ -120,6 +167,7 @@ class EntidadeAnimada(arcade.Sprite):
                     self.frame = 0
                     self.atacando = False
                     self.acao = "idle"
+                    self.cooldown_ataque = TEMPO_COOLDOWN_ATAQUE
             else:
                 self.frame = (self.frame + 1) % len(frames)
         self.frame = min(self.frame, len(frames) - 1)
@@ -132,14 +180,56 @@ class Jogador(EntidadeAnimada):
     def __init__(self, mapa):
         super().__init__(anims_personagem())
         self.mapa = mapa
-        self.velocidade = 300
+        self.velocidade_base = 220  # mais devagar que antes (era 300), dá mais peso aos golpes dos inimigos
+        self.velocidade = self.velocidade_base
+        self.tempo_velocidade_extra = 0.0  # duração restante do bônus da poção azul
         # caixa de colisão menor que o sprite (o corpo do cavaleiro não preenche os 96px)
         self.meia_larg = 16
         self.meia_alt = 14
 
+        self.vida_maxima = 3
+        self.vida = self.vida_maxima
+        self.tempo_invulneravel = 0.0
+
+    def receber_dano(self, quantidade=1):
+        """Um golpe inimigo tira 1 vida e concede uma janela de invulnerabilidade —
+        sem isso, encostar num inimigo por vários frames seguidos zerava a vida
+        de uma vez só, o que na prática era a mesma morte instantânea de antes."""
+        if self.morto or self.tempo_invulneravel > 0:
+            return
+        self.vida = max(0, self.vida - quantidade)
+        self.tempo_invulneravel = TEMPO_INVULNERAVEL
+        if self.vida <= 0:
+            self.morrer()
+
+    def curar(self, quantidade=1):
+        """Efeito da poção vermelha."""
+        self.vida = min(self.vida_maxima, self.vida + quantidade)
+
+    def ativar_velocidade_extra(self, multiplicador, duracao):
+        """Efeito da poção azul: acelera por `duracao` segundos. Uma nova poção
+        durante o efeito só renova o tempo (não acumula multiplicador)."""
+        self.velocidade = self.velocidade_base * multiplicador
+        self.tempo_velocidade_extra = duracao
+
     def update(self, delta_time: float = 1/60, *args, **kwargs):
         if self.morto:
+            self.alpha = 255
             return
+
+        if self.tempo_invulneravel > 0:
+            self.tempo_invulneravel -= delta_time
+            # pisca enquanto está invulnerável, feedback claro de que levou dano
+            self.alpha = 120 if int(self.tempo_invulneravel * 10) % 2 == 0 else 255
+        else:
+            self.alpha = 255
+
+        if self.tempo_velocidade_extra > 0:
+            self.tempo_velocidade_extra -= delta_time
+            if self.tempo_velocidade_extra <= 0:
+                self.tempo_velocidade_extra = 0.0
+                self.velocidade = self.velocidade_base
+
         # move eixo por eixo: se bater na parede, cancela só aquele eixo (permite deslizar)
         novo_x = self.center_x + self.change_x * delta_time
         if not colide_com_parede(novo_x, self.center_y, self.mapa, self.meia_larg, self.meia_alt):
@@ -153,9 +243,11 @@ class Jogador(EntidadeAnimada):
 # Inimigos
 # ==========================================
 class InimigoBase(EntidadeAnimada):
-    def __init__(self, anims, velocidade, raio_visao, angulo_visao):
+    def __init__(self, anims, velocidade, raio_visao, angulo_visao, vida=1):
         super().__init__(anims)
         self.velocidade = velocidade
+        self.vida_maxima = vida
+        self.vida = vida
         self.estado = "patrulha"
 
         #parametros de IA
@@ -166,12 +258,16 @@ class InimigoBase(EntidadeAnimada):
         self.caminho_atual = []
         self.tempo_espera_patrulha = 0
 
+        # throttle do A*: evita rodar a busca completa a cada frame (60x/s)
+        self._alvo_busca_anterior = None
+        self._contagem_recalculo = 0
+
         self.mapa = None
         self.colide_paredes = True
         self.meia_larg = 12
         self.meia_alt = 12
 
-    def update_ia(self, mapa, jogador_x, jogador_y):
+    def update_ia(self, mapa, jogador_x, jogador_y, delta_time=1/60):
         self.mapa = mapa
         if self.morto:
             return
@@ -207,9 +303,22 @@ class InimigoBase(EntidadeAnimada):
 
         # Integra A*, só persegue se o estado permitir
         if self.estado == "perseguicao":
-            caminho = ia.a_star(mapa, minha_pos_grid, jogador_pos_grid)
+            # Recalcula o caminho completo só quando o alvo muda de tile, o
+            # caminho anterior acabou, ou já passou o intervalo de recálculo.
+            # Rodar o A* inteiro a cada um dos 60 frames por segundo era o
+            # maior custo da IA; entre recálculos, o inimigo continua seguindo
+            # o caminho já calculado (a direção é recomputada todo frame, só
+            # a busca em si é que fica mais espaçada).
+            if (jogador_pos_grid != self._alvo_busca_anterior
+                    or not self.caminho_atual
+                    or self._contagem_recalculo <= 0):
+                self.caminho_atual = ia.a_star(mapa, minha_pos_grid, jogador_pos_grid)
+                self._alvo_busca_anterior = jogador_pos_grid
+                self._contagem_recalculo = INTERVALO_RECALCULO_CAMINHO
+            else:
+                self._contagem_recalculo -= 1
 
-            self.caminho_atual = caminho # Guarda o caminho atual para debug ou uso futuro
+            caminho = self.caminho_atual # Guarda o caminho atual para debug ou uso futuro
 
             if caminho and len(caminho) > 0:
                 # Se o índice 0 for onde o inimigo já está, o próximo passo é o índice 1
@@ -303,18 +412,23 @@ class InimigoBase(EntidadeAnimada):
 # Inimigos Específicos herdando da base
 class Slime(InimigoBase):
     def __init__(self):
-        # Slimes são mais lentos
-        super().__init__(anims_slime(), velocidade=120, raio_visao=5, angulo_visao=360)
+        # Slimes são mais lentos, mas aguentam 2 golpes
+        super().__init__(anims_slime(), velocidade=120, raio_visao=5, angulo_visao=360, vida=2)
         self.angulo_olhar = 0 #começa olhando pra esquerda
 
 class Morcego(InimigoBase):
     def __init__(self):
-        # Morcegos são mais rápidos e enxergam longe (8 blocos), cone de 120 graus
-        super().__init__(anims_morcego(), velocidade=240, raio_visao=8, angulo_visao=120)
+        # Morcegos são mais rápidos, enxergam longe (8 blocos), cone de 120 graus,
+        # e aguentam 3 golpes — o mais resistente dos dois inimigos
+        super().__init__(anims_morcego(), velocidade=240, raio_visao=8, angulo_visao=120, vida=3)
         self.angulo_olhar = 180
         self.colide_paredes = False # voa por cima das paredes
 
-    def update_ia(self, mapa, jogador_x, jogador_y):
+        # memória de curto prazo: some da linha de visão por até 2s sem desistir
+        self.tempo_sem_ver_jogador = 0.0
+        self.ultima_pos_jogador = None # último (x, y) em pixels onde o viu
+
+    def update_ia(self, mapa, jogador_x, jogador_y, delta_time=1/60):
         self.mapa = mapa
         if self.morto:
             return
@@ -330,35 +444,45 @@ class Morcego(InimigoBase):
         if self.change_x != 0 or self.change_y != 0:
             self.angulo_olhar = math.degrees(math.atan2(-self.change_y, self.change_x))
 
-        # 2. Usa Raycasting e FOV (não enxerga através de paredes)
+        # 2. Usa Raycasting e FOV: a visão É bloqueada por paredes. Só o VOO
+        # ignora paredes (colide_paredes=False lá embaixo) — ele pode voar por
+        # cima de um obstáculo que já viu o jogador atravessar, mas não
+        # enxerga através de paredes.
         jogador_visivel = ia.is_player_in_fov(
             minha_pos_grid,
             jogador_pos_grid,
             self.angulo_olhar,
             self.angulo_visao,
             self.raio_visao,
-            mapa,
-            True  # Morcegos ignoram paredes para perseguir o jogador
+            mapa
         )
 
-        # 3. Máquina de Estados
+        # 3. Máquina de Estados com memória de curto prazo: perder a linha de
+        # visão por um instante (uma coluna passando na frente, um degrau de
+        # parede) não faz o morcego esquecer o jogador na hora — ele guarda a
+        # última posição vista e só desiste depois de TEMPO_MEMORIA_MORCEGO
+        # segundos seguidos sem recuperar a visão.
         if jogador_visivel:
+            self.tempo_sem_ver_jogador = 0.0
+            self.ultima_pos_jogador = (jogador_x, jogador_y)
             self.estado = "perseguicao"
-        else:
-            self.estado = "patrulha"
-            self.change_x = 0
-            self.change_y = 0
-            self.caminho_atual = [] # Limpa a linha de debug
+        elif self.estado == "perseguicao":
+            self.tempo_sem_ver_jogador += delta_time
+            if self.tempo_sem_ver_jogador >= TEMPO_MEMORIA_MORCEGO:
+                self.estado = "patrulha"
+                self.tempo_sem_ver_jogador = 0.0
+                self.ultima_pos_jogador = None
 
-        # 4. Perseguição (IGNORA PAREDES E O A*)
-        if self.estado == "perseguicao":
-            # Calcula a distância direta (linha reta em pixels) para o jogador
-            dist_x = jogador_x - self.center_x
-            dist_y = jogador_y - self.center_y
+        # 4. Perseguição (IGNORA PAREDES E O A*): mira no jogador enquanto
+        # visível, ou na última posição conhecida enquanto ainda "lembra" dele
+        if self.estado == "perseguicao" and self.ultima_pos_jogador is not None:
+            alvo_x, alvo_y = self.ultima_pos_jogador
+            dist_x = alvo_x - self.center_x
+            dist_y = alvo_y - self.center_y
             distancia_total = math.hypot(dist_x, dist_y)
 
             if distancia_total > 2:
-                # Voa direto para o jogador passando por cima de tudo
+                # Voa direto para o alvo passando por cima de tudo
                 self.change_x = (dist_x / distancia_total) * self.velocidade
                 self.change_y = (dist_y / distancia_total) * self.velocidade
             else:
@@ -366,4 +490,11 @@ class Morcego(InimigoBase):
                 self.change_y = 0
 
             # Para o Debug Visual funcionar, fingimos que o "caminho" é uma reta
-            self.caminho_atual = [minha_pos_grid, jogador_pos_grid]
+            self.caminho_atual = [minha_pos_grid, pixel_para_grid(alvo_x, alvo_y)]
+        else:
+            self.estado = "patrulha"
+            self.change_x = 0
+            self.change_y = 0
+            self.caminho_atual = [] # Limpa a linha de debug
+            self.tempo_sem_ver_jogador = 0.0
+            self.ultima_pos_jogador = None

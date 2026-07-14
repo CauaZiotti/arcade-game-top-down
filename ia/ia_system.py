@@ -7,57 +7,72 @@ import heapq
 def raycast_clear_line(grid, start, end):
     """
     Verifica se há paredes (1) na linha reta entre start e end.
+
+    Anda em passos de 1 tile (o maior dos dois eixos define a quantidade de
+    passos, como um DDA) em vez de amostrar a cada 0.5 de distância euclidiana:
+    pra uma diagonal de 8 tiles isso é 8 passos ao invés de ~23, e ainda cobre
+    toda célula no caminho (sem furos), o que a amostragem antiga não garantia
+    para distâncias curtas.
     """
-    dist = math.hypot(end[0] - start[0], end[1] - start[1])
-    if dist == 0: return True
-    
-    dx = (end[1] - start[1]) / dist
-    dy = (end[0] - start[0]) / dist
-    
-    step_size = 0.5 
-    current_dist = 0.0
-    
-    while current_dist < dist:
-        current_dist += step_size
-        check_y = start[0] + dy * current_dist
-        check_x = start[1] + dx * current_dist
-        
-        grid_y, grid_x = int(round(check_y)), int(round(check_x))
-        
-        # Se bater na parede, visão bloqueada
-        if grid[grid_y][grid_x] == 1:
+    y0, x0 = start
+    y1, x1 = end
+
+    passos = max(abs(y1 - y0), abs(x1 - x0))
+    if passos == 0:
+        return True
+
+    rows = len(grid)
+    cols = len(grid[0]) if rows else 0
+    passo_y = (y1 - y0) / passos
+    passo_x = (x1 - x0) / passos
+
+    y, x = float(y0), float(x0)
+    for _ in range(passos):
+        y += passo_y
+        x += passo_x
+        gy, gx = int(round(y)), int(round(x))
+
+        if not (0 <= gy < rows and 0 <= gx < cols):
             return False
-            
+        if grid[gy][gx] == 1:
+            return False
+
     return True
 
 # ==========================================
 # 2. FOV (Campo de Visão)
 # ==========================================
-def is_player_in_fov(enemy_pos, player_pos, enemy_facing_angle, fov_angle, max_dist, grid, ignora_paredes = False):
+def is_player_in_fov(enemy_pos, player_pos, enemy_facing_angle, fov_angle, max_dist, grid, ignora_paredes=False):
     """
     Verifica se o jogador está visível integrando Distância + Ângulo + Raycasting.
+
+    Os testes mais baratos vêm primeiro pra sair cedo sem gastar trig nem
+    percorrer o grid: distância ao quadrado (sem sqrt) e, só se o campo de
+    visão não for 360, o ângulo do cone. O raycast (o mais caro) só roda se
+    os dois anteriores já passaram.
     """
-    dist = math.hypot(player_pos[0] - enemy_pos[0], player_pos[1] - enemy_pos[1])
-    
-    # 1. Checa a distância máxima
-    if dist > max_dist:
+    dy = player_pos[0] - enemy_pos[0]
+    dx = player_pos[1] - enemy_pos[1]
+
+    dist_quadrado = dy * dy + dx * dx
+    if dist_quadrado > max_dist * max_dist:
         return False
-        
-    # 2. Checa o ângulo do cone de visão
-    # math.atan2 retorna o ângulo em radianos, convertemos para graus
-    angle_to_player = math.degrees(math.atan2(player_pos[0] - enemy_pos[0], player_pos[1] - enemy_pos[1]))
-    
-    # Normaliza a diferença de ângulo para ficar entre -180 e 180
-    angle_diff = (angle_to_player - enemy_facing_angle) % 360
-    if angle_diff > 180:
-        angle_diff -= 360
-        
-    if abs(angle_diff) > (fov_angle / 2):
-        return False
-    
+
+    if fov_angle < 360:
+        # math.atan2 retorna o ângulo em radianos, convertemos para graus
+        angle_to_player = math.degrees(math.atan2(dy, dx))
+
+        # Normaliza a diferença de ângulo para ficar entre -180 e 180
+        angle_diff = (angle_to_player - enemy_facing_angle) % 360
+        if angle_diff > 180:
+            angle_diff -= 360
+
+        if abs(angle_diff) > (fov_angle / 2):
+            return False
+
     if ignora_paredes:
         return True
-    # 3. Se passou pela distância e pelo ângulo, faz o Raycasting
+    # Se passou pela distância e pelo ângulo, faz o Raycasting
     return raycast_clear_line(grid, enemy_pos, player_pos)
 
 # ==========================================
@@ -66,20 +81,36 @@ def is_player_in_fov(enemy_pos, player_pos, enemy_facing_angle, fov_angle, max_d
 def a_star(grid, start, end):
     """
     Encontra o caminho mais curto desviando de obstáculos.
+
+    A heurística de Manhattan pura empata sempre que dois vizinhos estão a
+    igual distância do alvo, e o heapq então desempata comparando as tuplas
+    (linha, coluna) — o que sistematicamente prioriza reduzir a linha antes
+    da coluna. Resultado visual: o caminho sobe todo pra depois andar todo
+    pro lado, em vez de alternar como uma escadinha na direção da reta
+    start->end. Corrigido com um termo de desempate por distância à reta
+    (cross-track): entre vizinhos empatados, prefere o mais alinhado com a
+    linha reta até o objetivo.
     """
     rows, cols = len(grid), len(grid[0])
+    if start == end:
+        return []
+
     open_set = []
-    heapq.heappush(open_set, (0, start))
-    
+    contador = 0  # desempate estável do heap; barato e evita comparar tuplas de coordenadas à toa
+    heapq.heappush(open_set, (0, contador, start))
+
     came_from = {}
     g_score = {start: 0}
-    
+
     # Movimentos: Cima, Baixo, Esquerda, Direita
     directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
-    
+
+    dy_total = end[0] - start[0]
+    dx_total = end[1] - start[1]
+
     while open_set:
-        _, current = heapq.heappop(open_set)
-        
+        _, _, current = heapq.heappop(open_set)
+
         if current == end:
             path = []
             while current in came_from:
@@ -87,27 +118,33 @@ def a_star(grid, start, end):
                 current = came_from[current]
             path.reverse()
             return path
-            
+
         for dy, dx in directions:
             neighbor = (current[0] + dy, current[1] + dx)
-            
+
             # Verifica se está dentro do mapa e se não é parede
             if 0 <= neighbor[0] < rows and 0 <= neighbor[1] < cols:
                 if grid[neighbor[0]][neighbor[1]] == 1:
                     continue
-                
+
                 tentative_g_score = g_score[current] + 1
-                
+
                 if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                     came_from[neighbor] = current
                     g_score[neighbor] = tentative_g_score
-                    
+
                     # Heurística de Manhattan (distância em grid)
                     h_score = abs(neighbor[0] - end[0]) + abs(neighbor[1] - end[1])
-                    f_score = tentative_g_score + h_score
-                    
-                    heapq.heappush(open_set, (f_score, neighbor))
-                    
+
+                    # Desempate: distância do vizinho até a reta start->end.
+                    # Peso pequeno (não pode superar o custo de 1 passo) só
+                    # pra guiar empates, não pra mudar o caminho mais curto.
+                    cross = abs((neighbor[0] - start[0]) * dx_total - (neighbor[1] - start[1]) * dy_total)
+                    f_score = tentative_g_score + h_score + cross * 0.001
+
+                    contador += 1
+                    heapq.heappush(open_set, (f_score, contador, neighbor))
+
     return [] # Retorna lista vazia se não achar caminho
 
 # ==========================================
@@ -147,12 +184,12 @@ if __name__ == "__main__":
     inimigo_olhando_para = 45 # graus (diagonal inferior direita)
     angulo_visao = 90
     distancia_max = 6
-    
+
     print("\n=== INICIANDO TESTE DAS IAs ===")
-    
+
     # 1. Testa FOV e Raycasting integrados
     visivel = is_player_in_fov(inimigo_pos, jogador_pos, inimigo_olhando_para, angulo_visao, distancia_max, mapa)
-    
+
     if visivel:
         print("\n[!] ALERTA: Jogador entrou no FOV e está com linha de visão limpa!")
         print("Ação do Inimigo: ATACAR")
@@ -160,10 +197,10 @@ if __name__ == "__main__":
     else:
         print("\n[?] Jogador não está visível (Fora do FOV, muito longe ou bloqueado por parede).")
         print("Ação do Inimigo: ACIONAR A* PARA BUSCA/PERSEGUIÇÃO")
-        
+
         # 2. Testa o A*
         caminho = a_star(mapa, inimigo_pos, jogador_pos)
-        
+
         if caminho:
             print(f"\nCaminho calculado com sucesso! Passos: {len(caminho)}")
             print_test_scenario(mapa, inimigo_pos, jogador_pos, caminho)
