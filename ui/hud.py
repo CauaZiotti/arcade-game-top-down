@@ -5,14 +5,6 @@ COR_VIDA_VAZIA = (70, 30, 30)
 
 
 class HUD:
-    """HUD desenhado em espaço de tela: usa uma câmera própria (parada, sem
-    seguir o jogador) pra ficar sempre fixo no mesmo canto, independente de
-    pra onde a câmera do mundo estiver olhando.
-
-    Mostra as informações relevantes ao jogador pedidas no enunciado: vida
-    atual, o objetivo da fase (inimigos restantes -> pegar a chave) e o
-    status de efeitos temporários (poção de velocidade).
-    """
 
     def __init__(self, largura_tela, altura_tela):
         self.camera = arcade.Camera2D()

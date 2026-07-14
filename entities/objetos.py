@@ -11,9 +11,6 @@ CURA_POCAO_VERMELHA = 1
 
 
 class Coletavel(SpriteAnimado):
-    """Base pra pickups do chão: mostra a animação em loop do próprio sheet
-    (poção balançando, chave flutuando) e some quando o jogador encosta.
-    `efeito`, se passado, é chamado com o jogador no momento da coleta."""
 
     def __init__(self, caminho, frame_larg, x, y, escala, raio_colisao, efeito=None):
         texturas = fatiar(caminho, frame_larg, 16)
@@ -48,9 +45,6 @@ def pocao_vermelha(x, y, escala, raio_colisao):
 
 
 def criar_chave(x, y, escala, raio_colisao):
-    """Chave: só é criada depois que o baú abre; coletá-la vence o jogo
-    (checado pelo chamador via `chave.tentar_coletar(...)`)."""
-    # sheet de 60px de largura com 4 frames -> 15px por frame (não é múltiplo de 16)
     return Coletavel("Assets/Objects/Key_chest_2.png", 15, x, y, escala, raio_colisao)
 
 

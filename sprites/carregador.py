@@ -1,7 +1,3 @@
-# Carrega os spritesheets e monta os dicionários de animação de cada entidade.
-# Cada animação é uma lista de texturas; a chave é (acao, direcao).
-# Direções: front, back, side (olhando p/ direita) e side_flip (espelhado p/ esquerda).
-
 import arcade
 from PIL import Image
 
@@ -10,9 +6,7 @@ DIRECOES = ["front", "back", "side", "side_flip"]
 
 
 def fatiar(caminho, frame_larg, frame_alt, deslocamento=(0, 0)):
-    """Fatia um spritesheet horizontal em N frames (N = largura da imagem / largura do frame).
-    `deslocamento` (dx, dy) empurra o desenho dentro do frame — usado pra centralizar
-    o corpo do personagem, que vem pintado em posições diferentes em cada vista."""
+    
     if deslocamento == (0, 0):
         sheet = arcade.load_spritesheet(caminho)
         n = sheet.image.width // frame_larg
@@ -30,7 +24,7 @@ def fatiar(caminho, frame_larg, frame_alt, deslocamento=(0, 0)):
 
 
 def _centro_do_desenho(caminho, frame_larg, frame_alt):
-    """Centro (x, y) dos pixels visíveis do 1º frame de um spritesheet."""
+    
     img = Image.open(caminho).convert("RGBA")
     bb = img.crop((0, 0, frame_larg, frame_alt)).getchannel("A").getbbox()
     return (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2
@@ -41,11 +35,7 @@ def espelhar(texturas):
 
 
 def completar(anims):
-    """Preenche as direções/ações que o spritesheet não tem:
-    - sem 'back'  -> usa o 'front'  (morcego e slime não têm vista de costas)
-    - sem 'run'   -> usa o 'idle'   (morcego voa e slime pula com os mesmos frames)
-    - 'side_flip' -> espelha o 'side' (as artes laterais olham para a direita)
-    """
+   
     for acao in ACOES:
         if (acao, "front") not in anims:
             base = "idle" if acao == "run" else acao
@@ -61,13 +51,6 @@ def completar(anims):
 
 
 def anims_personagem():
-    """Personagem: frames de 32x32 (2x2 unidades de 16px).
-    Atack 4f | Dead 6f | Idle 4-5f | Run 6f (a contagem sai da largura do arquivo).
-
-    As vistas vêm pintadas em alturas diferentes do canvas (a lateral fica ~4px
-    mais baixa que a frontal), o que fazia o corpo 'pular' ao virar. Medimos o
-    centro do corpo no Idle de cada vista e deslocamos TODOS os sheets daquela
-    vista pro corpo cair exatamente no meio do frame."""
     A = "Assets/Character"
     deslocamentos = {}
     for direcao, vista in [("front", "front"), ("back", "back"), ("side", "side")]:
@@ -83,7 +66,6 @@ def anims_personagem():
 
 
 def anims_morcego():
-    """Morcego: idle 16x16 (4f) | atack 16x32 (5f) | dead 16x32 (4f). Sem vista de costas."""
     A = "Assets/Enemies/Bat"
     anims = {
         ("idle", "front"): fatiar(f"{A}/Idle/Idle_front_view.png", 16, 16),
@@ -97,8 +79,6 @@ def anims_morcego():
 
 
 def anims_slime():
-    """Slime: idle/run/walk num sheet só 16x16 (4f) | atack front 16x28, side 32x16 (4f)
-    | dead 3 frames (largura do arquivo dividida por 3, serve p/ todas as vistas)."""
     A = "Assets/Enemies/Slime"
     dead_sheet = arcade.load_spritesheet(f"{A}/Dead/Dead_all_views.png")
     dead_larg = dead_sheet.image.width // 3

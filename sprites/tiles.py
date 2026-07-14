@@ -1,21 +1,3 @@
-# Autotiling estilo dungeon: lê a matriz do mapa (1=parede/vazio, 0=chão) e
-# monta o cenário como no tileset de referência:
-#   - salas escavadas na escuridão (parede longe do chão nem é desenhada)
-#   - paredes ao norte do chão têm 2 camadas: FACE de tijolos + CAPA de pedras em cima
-#   - demais bordas ganham a pedra arredondada virada para o lado do chão
-#
-# Classificação em 2 passadas:
-#   1) cada célula vira CHAO, FACE (parede com chão logo ao sul), CAPA (parede
-#      encostada em chão/face) ou VAZIO (parede profunda, fica só o fundo escuro)
-#   2) cada CAPA escolhe canto/borda olhando onde tem CHAO ou FACE em volta
-#
-# Posições no Tileset.png (grade de 16px, coluna/linha contadas do topo),
-# usando a "sala grande" como template (colunas 17-24, linhas 1-6):
-#   (17,1) canto sup-esq | (18..23,1) capa superior | (24,1) canto sup-dir
-#   (18..23,2) face de tijolos
-#   (17,3..5) borda esquerda | (18..23,3..5) chão | (24,3..5) borda direita
-#   (17,6) canto inf-esq | (18..23,6) capa inferior | (24,6) canto inf-dir
-
 import arcade
 from sprites.carregador import fatiar
 
@@ -86,14 +68,7 @@ def _classificar(mapa):
 
 
 def _tile_capa(tipo, l, c):
-    """Escolhe canto/borda da capa de pedras olhando o que tem em volta.
-
-    Dois testes diferentes:
-      - chão de verdade (ch): decide os CANTOS convexos — a face de tijolo NÃO
-        pode contar aqui, senão o fim de uma fileira de tijolos vira capa reta
-        em vez de pedra de canto (bug nas bocas de corredor e pilastras)
-      - aberto (ab = chão ou face): decide bordas retas e quinas diagonais
-    """
+    
     def ab(ll, cc):
         return 0 <= ll < len(tipo) and 0 <= cc < len(tipo[0]) and tipo[ll][cc] in (CHAO, FACE)
 

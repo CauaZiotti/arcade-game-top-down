@@ -14,12 +14,9 @@ from entities.objetos import (
 from sprites.tiles import construir_mapa, sprite_objeto, sprite_porta
 from ui.hud import HUD
 
-# Mundo maior que a tela: matriz 30x40 tiles de 48px => 1920x1440 pixels.
-# A câmera (janela de 960x720) segue o personagem.
 LINHAS_MAPA = 30
 COLUNAS_MAPA = 40
 
-# salas e corredores escavados na escuridão: (linha_ini, col_ini, linha_fim, col_fim)
 AREAS_LIVRES = [
     (4, 3, 10, 14),    # sala 1 (spawn, canto superior esquerdo)
     (3, 22, 11, 36),   # sala 2 (superior direita)
@@ -34,13 +31,12 @@ AREAS_LIVRES = [
 ]
 
 def criar_mapa():
-    """Gera a matriz do mundo: começa tudo parede (1) e escava as áreas livres (0)."""
     mapa = [[1] * COLUNAS_MAPA for _ in range(LINHAS_MAPA)]
     for l1, c1, l2, c2 in AREAS_LIVRES:
         for l in range(l1, l2 + 1):
             for c in range(c1, c2 + 1):
                 mapa[l][c] = 0
-    # pilastra no meio da sala 2 (vira paredão com face de tijolos, como na referência)
+    
     for l in range(6, 9):
         for c in range(28, 31):
             mapa[l][c] = 1
@@ -48,16 +44,14 @@ def criar_mapa():
 
 MAPA = criar_mapa()
 
-# objetos puramente decorativos: (arquivo, larg_frame, alt_frame, linha, coluna)
 OBJETOS_DECORACAO = [
     ("Assets/Objects/Barrel_1.png", 16, 16, 16, 3),    # barris na sala 3
     ("Assets/Objects/Barrel_2.png", 16, 16, 17, 3),
     ("Assets/Objects/Barrel_1.png", 16, 16, 24, 20),   # barris na sala 4 (ampliada)
     ("Assets/Objects/Barrel_2.png", 16, 16, 17, 33),   # barril na sala 5 (ampliada)
 ]
-PORTA_DECORACAO = (1.5, 25.5)  # porta 2x2 no muro norte da sala 2
+PORTA_DECORACAO = (1.5, 25.5)  
 
-# poções coletáveis: (tipo, linha, coluna) — azul acelera, vermelha cura
 POCOES = [
     ("azul", 4, 24),       # sala 2
     ("azul", 24, 35),      # sala 5
@@ -66,7 +60,6 @@ POCOES = [
     ("vermelha", 22, 24),  # sala 4
 ]
 
-# armadilhas nos corredores: força o jogador a prestar atenção por onde anda
 ARMADILHAS_URSO = [
     (13, 6),   # corredor sala 1 -> sala 3
     (20, 14),  # corredor sala 3 -> sala 4
@@ -96,7 +89,6 @@ TECLAS_MOVIMENTO = TECLAS_CIMA + TECLAS_BAIXO + TECLAS_ESQUERDA + TECLAS_DIREITA
 
 
 class TelaJogo(arcade.View):
-    """Tela principal: a fase jogável (movimento, colisão, IA, combate, câmera)."""
 
     def __init__(self):
         super().__init__()
@@ -202,10 +194,6 @@ class TelaJogo(arcade.View):
         return "Chave em mãos!"
 
     def atualizar_movimento_jogador(self):
-        """Recalcula a velocidade do jogador a partir das teclas seguradas.
-        Feito a cada frame (e não no evento de tecla) pra não perder movimento
-        quando o jogador segura/solta várias teclas; a diagonal é normalizada
-        pra velocidade não somar nos dois eixos."""
         if self.jogador.morto:
             self.jogador.change_x = 0
             self.jogador.change_y = 0
@@ -325,9 +313,6 @@ class TelaJogo(arcade.View):
 
         inimigos_vivos = sum(1 for i in self.lista_inimigos if not i.morto)
 
-        # condição de derrota (vida zerada) / vitória (baú aberto + chave coletada):
-        # roda ANTES do HUD ler o texto do objetivo, senão a coleta da chave só
-        # aparece refletida um frame depois (o HUD mostraria o texto antigo)
         if self.fim_de_jogo is None:
             if self.jogador.morto:
                 self.fim_de_jogo = False

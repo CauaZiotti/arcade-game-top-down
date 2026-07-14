@@ -6,8 +6,6 @@ COR_FUNDO_DERROTA = (32, 12, 14)
 
 
 class TelaFim(arcade.View):
-    """Tela de fim de jogo: vitória (todos os inimigos eliminados) ou
-    derrota (vida do jogador zerada), com opção de reiniciar ou sair."""
 
     def __init__(self, vitoria):
         super().__init__()
